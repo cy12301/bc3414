@@ -2,6 +2,10 @@ import sqlite3
 import yfinance as yf
 import csv
 import matplotlib.pyplot as plt  # For visualization
+from thefuzz import process
+from thefuzz import fuzz
+import tkinter as tk
+from tkinter.filedialog import askopenfilename
 
 class DatabaseManager:
     def __init__(self, db_name="portfolio.db"):
@@ -79,6 +83,8 @@ class DatabaseManager:
             purchase_price = market_price  # Use market price for purchase
         elif order_type == 'limit' and limit_price is not None:
             market_price = limit_price  # Use the provided limit price for purchase
+        elif order_type == 'imported':
+            market_price = purchase_price
         else:
             print("Invalid order type or missing limit price.")
             return None
@@ -303,14 +309,20 @@ class PortfolioManager:
                 self.validate_ticker(ticker)
 
     def validate_ticker(self, ticker):
-        """Suggests matching tickers for a given partial input."""
+        """Suggests matching tickers for a given partial input or stock name."""
         matches = [valid_ticker for valid_ticker in self.valid_tickers if valid_ticker.startswith(ticker.upper())]
         if matches:
             print("Matching tickers:")
             for match in matches:
                 print(f"{match} - {self.valid_tickers[match]['name']}")
         else:
-            print("No matching tickers found.")
+            top_matches = process.extract(ticker, [i['name'] for i in self.valid_tickers.values()], scorer=fuzz.ratio, limit=5)
+            print("(Ticker - Company Name (Similarity Score)):")
+            for match in top_matches:
+                value = match[0]
+                score = match[1]
+                key = next(k for k, v in self.valid_tickers.items() if v['name'] == value)
+                print(f"{key} - {self.valid_tickers[key]['name']} ({score})")
         return matches
 
     def export_portfolio(self, portfolio_id, filename="portfolio_export.csv"):
@@ -328,6 +340,29 @@ class PortfolioManager:
                 print(f"Error exporting portfolio: {e}")
         else:
             print("No assets to export.")
+
+    def import_portfolio(self, portfolio_id, filename=None):
+        """Imports the portfolio details from a CSV file."""
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            root.call('wm', 'attributes', '.', '-topmost', True)
+            filename = askopenfilename()
+            with open(filename, "r") as csvfile:
+                reader = csv.reader(csvfile)
+                headers = next(reader)  # Skip the header row
+                for row in reader:
+                    asset_id, ticker, name, purchase_price, market_price, quantity, pnl = row
+                    purchase_price = float(purchase_price)
+                    market_price = float(market_price)
+                    quantity = int(quantity)
+                    pnl = float(pnl)
+                    self.db.insert_asset(portfolio_id, ticker, name, purchase_price, quantity, "imported", market_price)
+                print(f"Portfolio imported from {filename}")
+        except FileNotFoundError:
+            print(f"File {filename} not found.")
+        except Exception as e:
+            print(f"Error importing portfolio: {e}")
 
     def visualize_portfolio(self, portfolio_id):
         """Visualizes the portfolio performance with a bar chart showing current values."""
@@ -400,7 +435,7 @@ if __name__ == "__main__":
     portfolio_id = manager.create_portfolio(user_id, portfolio_name)
 
     while True:
-        print("\nOptions: 1) Buy Stock  2) Check Portfolio  3) Short Sell Stock  4) Export Portfolio  5) Visualize Portfolio  6) Diversification Analysis  7) Exit")
+        print("\nOptions: 1) Buy Stock  2) Check Portfolio  3) Short Sell Stock  4) Export Portfolio  5) Visualize Portfolio  6) Diversification Analysis  7)Import Portfolio(CSV)  8) Exit")
         choice = input("Enter choice: ")
 
         if choice == "1":
@@ -416,6 +451,8 @@ if __name__ == "__main__":
         elif choice == "6":
             manager.diversification_analysis(portfolio_id)
         elif choice == "7":
+            manager.import_portfolio(portfolio_id)
+        elif choice == "8":
             print("Exiting...")
             break
         else:
